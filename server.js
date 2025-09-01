@@ -37,38 +37,43 @@ const MAX_HISTORY = 50;
 io.on('connection', (socket) => {
     console.log('Neuer Client verbunden:', socket.id);
     
-    // Generiere zufälligen Benutzernamen
-    const username = `Player_${Math.floor(Math.random() * 10000)}`;
-    
-    // Client speichern
+    // Client speichern (ohne Username, wird später gesetzt)
     clients.set(socket.id, {
         id: socket.id,
-        username: username,
+        username: null,
         connectedAt: new Date()
     });
     
-    // Sende Willkommensnachricht und Historie
-    socket.emit('welcome', {
-        username: username,
-        history: messageHistory,
-        onlineUsers: Array.from(clients.values()).map(c => c.username)
-    });
-    
-    // Broadcast an alle: Neuer Spieler
-    socket.broadcast.emit('userJoined', {
-        username: username,
-        message: `${username} ist dem Chat beigetreten`,
-        timestamp: new Date().toISOString()
+    // Username vom Client empfangen
+    socket.on('setUsername', (username) => {
+        const client = clients.get(socket.id);
+        if (client) {
+            client.username = username;
+            console.log(`Username gesetzt für ${socket.id}: ${username}`);
+            
+            // Sende Willkommensnachricht und Historie
+            socket.emit('welcome', {
+                history: messageHistory,
+                onlineUsers: Array.from(clients.values()).filter(c => c.username).map(c => c.username)
+            });
+            
+            // Broadcast an alle: Neuer Spieler
+            socket.broadcast.emit('userJoined', {
+                username: username,
+                message: `${username} ist dem Chat beigetreten`,
+                timestamp: new Date().toISOString()
+            });
+        }
     });
     
     // Nachricht empfangen und weiterleiten
     socket.on('chatMessage', (data) => {
         const client = clients.get(socket.id);
-        if (!client) return;
+        if (!client || !client.username) return;
         
         const message = {
             id: Date.now() + Math.random(),
-            username: data.username || client.username,
+            username: client.username,
             message: data.message,
             timestamp: new Date().toISOString(),
             type: 'user'
@@ -86,37 +91,22 @@ io.on('connection', (socket) => {
         console.log(`Nachricht von ${message.username}: ${message.message}`);
     });
     
-    // Benutzername ändern
-    socket.on('changeUsername', (newUsername) => {
-        const client = clients.get(socket.id);
-        if (!client) return;
-        
-        const oldUsername = client.username;
-        client.username = newUsername;
-        
-        // Informiere alle über Namensänderung
-        io.emit('usernameChanged', {
-            oldUsername: oldUsername,
-            newUsername: newUsername,
-            message: `${oldUsername} heißt jetzt ${newUsername}`,
-            timestamp: new Date().toISOString()
-        });
-    });
-    
     // Client-Liste anfordern
     socket.on('requestUserList', () => {
         socket.emit('userList', {
-            users: Array.from(clients.values()).map(c => ({
-                username: c.username,
-                connectedAt: c.connectedAt
-            }))
+            users: Array.from(clients.values())
+                .filter(c => c.username)
+                .map(c => ({
+                    username: c.username,
+                    connectedAt: c.connectedAt
+                }))
         });
     });
     
     // Verbindung getrennt
     socket.on('disconnect', () => {
         const client = clients.get(socket.id);
-        if (client) {
+        if (client && client.username) {
             console.log('Client getrennt:', client.username);
             
             // Broadcast: Spieler hat verlassen
@@ -125,9 +115,9 @@ io.on('connection', (socket) => {
                 message: `${client.username} hat den Chat verlassen`,
                 timestamp: new Date().toISOString()
             });
-            
-            clients.delete(socket.id);
         }
+        
+        clients.delete(socket.id);
     });
     
     // Ping/Pong für Verbindungscheck
