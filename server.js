@@ -1,6 +1,5 @@
 const express = require('express');
 const http = require('http');
-const https = require('https');
 const socketIO = require('socket.io');
 const cors = require('cors');
 const fs = require('fs');
@@ -22,117 +21,9 @@ const io = socketIO(server, {
 app.use(cors());
 app.use(express.json());
 
-// Discord Webhook URLs aus Environment Variables
-const DISCORD_WEBHOOK_LOGS = process.env.DISCORD_WEBHOOK_LOGS;
-const DISCORD_WEBHOOK_CHAT = process.env.DISCORD_WEBHOOK_CHAT;
-
-// Discord Webhook Funktion (mit https Modul statt fetch)
-function sendDiscordWebhook(webhookUrl, content, embed = null) {
-    if (!webhookUrl) {
-        console.log('⚠️  Discord Webhook URL nicht konfiguriert');
-        return;
-    }
-    
-    try {
-        const payload = JSON.stringify({
-            content: content || undefined,
-            embeds: embed ? [embed] : undefined
-        });
-        
-        const url = new URL(webhookUrl);
-        
-        const options = {
-            hostname: url.hostname,
-            port: 443,
-            path: url.pathname,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(payload)
-            }
-        };
-        
-        const req = https.request(options, (res) => {
-            if (res.statusCode !== 204 && res.statusCode !== 200) {
-                console.error('Discord Webhook Fehler:', res.statusCode);
-            }
-        });
-        
-        req.on('error', (error) => {
-            console.error('Discord Webhook Fehler:', error.message);
-        });
-        
-        req.write(payload);
-        req.end();
-    } catch (error) {
-        console.error('Discord Webhook Fehler:', error.message);
-    }
-}
-
-// Discord Log-Funktionen
-function discordLogSuccess(username, code) {
-    const embed = {
-        title: '✅ Erfolgreiche Verifizierung',
-        description: `**${username}** hat sich verifiziert`,
-        color: 0x00ff88,
-        fields: [
-            { name: 'Code', value: code, inline: true },
-            { name: 'Zeitpunkt', value: new Date().toLocaleString('de-DE'), inline: true }
-        ],
-        timestamp: new Date().toISOString()
-    };
-    sendDiscordWebhook(DISCORD_WEBHOOK_LOGS, null, embed);
-}
-
-function discordLogFailed(username, code) {
-    const embed = {
-        title: '❌ Fehlgeschlagene Verifizierung',
-        description: `**${username}** versuchte ungültigen Code`,
-        color: 0xff0000,
-        fields: [
-            { name: 'Versuchter Code', value: code, inline: true },
-            { name: 'Zeitpunkt', value: new Date().toLocaleString('de-DE'), inline: true }
-        ],
-        timestamp: new Date().toISOString()
-    };
-    sendDiscordWebhook(DISCORD_WEBHOOK_LOGS, null, embed);
-}
-
-function discordLogConnect(username, code) {
-    const embed = {
-        title: '🔌 User Connected',
-        description: `**${username}** ist dem Chat beigetreten`,
-        color: 0x0099ff,
-        fields: [
-            { name: 'Code', value: code, inline: true },
-            { name: 'Zeitpunkt', value: new Date().toLocaleString('de-DE'), inline: true }
-        ],
-        timestamp: new Date().toISOString()
-    };
-    sendDiscordWebhook(DISCORD_WEBHOOK_LOGS, null, embed);
-}
-
-function discordLogDisconnect(username, code) {
-    const embed = {
-        title: '🔌 User Disconnected',
-        description: `**${username}** hat den Chat verlassen`,
-        color: 0x808080,
-        fields: [
-            { name: 'Code', value: code, inline: true },
-            { name: 'Zeitpunkt', value: new Date().toLocaleString('de-DE'), inline: true }
-        ],
-        timestamp: new Date().toISOString()
-    };
-    sendDiscordWebhook(DISCORD_WEBHOOK_LOGS, null, embed);
-}
-
-function discordLogChatMessage(username, message) {
-    const content = `**${username}:** ${message}`;
-    sendDiscordWebhook(DISCORD_WEBHOOK_CHAT, content);
-}
-
 // Pfade für Dateien
 const WHITELIST_PATH = path.join(__dirname, 'whitelist.txt');
+const CODE_USAGE_PATH = path.join(__dirname, 'code-usage.json');
 
 // Whitelist und Code-Tracking
 let whitelist = new Set();
@@ -163,7 +54,33 @@ function loadWhitelist() {
     }
 }
 
-// Code tracken (nur im Memory)
+// Code-Usage laden
+function loadCodeUsage() {
+    try {
+        if (fs.existsSync(CODE_USAGE_PATH)) {
+            const content = fs.readFileSync(CODE_USAGE_PATH, 'utf8');
+            codeUsage = JSON.parse(content);
+            console.log(`✅ Code-Usage geladen: ${Object.keys(codeUsage).length} Codes getrackt`);
+        } else {
+            codeUsage = {};
+            saveCodeUsage();
+        }
+    } catch (error) {
+        console.error('❌ Fehler beim Laden der Code-Usage:', error);
+        codeUsage = {};
+    }
+}
+
+// Code-Usage speichern
+function saveCodeUsage() {
+    try {
+        fs.writeFileSync(CODE_USAGE_PATH, JSON.stringify(codeUsage, null, 2));
+    } catch (error) {
+        console.error('❌ Fehler beim Speichern der Code-Usage:', error);
+    }
+}
+
+// Code tracken
 function trackCodeUsage(code, username) {
     const upperCode = code.toUpperCase();
     
@@ -173,6 +90,7 @@ function trackCodeUsage(code, username) {
     
     if (!codeUsage[upperCode].includes(username)) {
         codeUsage[upperCode].push(username);
+        saveCodeUsage();
         console.log(`📊 Code ${upperCode} wird nun auch von "${username}" verwendet`);
     }
 }
@@ -184,6 +102,7 @@ function isValidCode(code) {
 
 // Initial laden
 loadWhitelist();
+loadCodeUsage();
 
 // Whitelist neu laden (manueller Trigger via Endpoint)
 app.get('/reload-whitelist', (req, res) => {
@@ -195,17 +114,6 @@ app.get('/reload-whitelist', (req, res) => {
     });
 });
 
-// Code-Usage Endpoint (für Übersicht)
-app.get('/admin/code-usage', (req, res) => {
-    res.json({
-        success: true,
-        timestamp: new Date().toISOString(),
-        codeUsage: codeUsage,
-        totalCodes: Object.keys(codeUsage).length,
-        totalUsers: Object.values(codeUsage).flat().length
-    });
-});
-
 // Gesundheitscheck-Endpoint
 app.get('/', (req, res) => {
     res.json({ 
@@ -213,11 +121,7 @@ app.get('/', (req, res) => {
         time: new Date().toISOString(),
         connectedClients: clients.size,
         whitelistedCodes: whitelist.size,
-        trackedCodes: Object.keys(codeUsage).length,
-        discordWebhooksConfigured: {
-            logs: !!DISCORD_WEBHOOK_LOGS,
-            chat: !!DISCORD_WEBHOOK_CHAT
-        }
+        trackedCodes: Object.keys(codeUsage).length
     });
 });
 
@@ -264,9 +168,6 @@ io.on('connection', (socket) => {
             
             console.log(`✅ ${username} erfolgreich verifiziert mit Code ${code.toUpperCase()}`);
             
-            // Discord Log: Erfolgreiche Verifizierung
-            discordLogSuccess(username, code.toUpperCase());
-            
             // Erfolg an Client senden
             socket.emit('verifySuccess', {
                 message: 'Verifizierung erfolgreich! Willkommen im Chat.'
@@ -280,9 +181,6 @@ io.on('connection', (socket) => {
                     .map(c => c.username)
             });
             
-            // Discord Log: User Connected
-            discordLogConnect(username, code.toUpperCase());
-            
             // Anderen Usern mitteilen
             socket.broadcast.emit('userJoined', {
                 username: username,
@@ -293,10 +191,6 @@ io.on('connection', (socket) => {
         } else {
             // Code ist ungültig
             console.log(`❌ Ungültiger Code von ${username}: ${code}`);
-            
-            // Discord Log: Fehlgeschlagene Verifizierung
-            discordLogFailed(username, code);
-            
             socket.emit('verifyFailed', {
                 message: 'Code ungültig, versuche es erneut'
             });
@@ -341,9 +235,6 @@ io.on('connection', (socket) => {
         io.emit('newMessage', message);
         
         console.log(`💬 ${message.username}: ${message.message}`);
-        
-        // Discord Log: Chat-Nachricht
-        discordLogChatMessage(message.username, message.message);
     });
     
     // Client-Liste anfordern
@@ -366,9 +257,6 @@ io.on('connection', (socket) => {
         const client = clients.get(socket.id);
         if (client && client.verified && client.username) {
             console.log(`🔌 Client getrennt: ${client.username} (Code: ${client.code})`);
-            
-            // Discord Log: User Disconnected
-            discordLogDisconnect(client.username, client.code);
             
             // Broadcast: Spieler hat verlassen
             socket.broadcast.emit('userLeft', {
@@ -394,6 +282,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`🚀 Server läuft auf Port ${PORT}`);
     console.log(`📋 Whitelist: ${whitelist.size} Codes geladen`);
-    console.log(`📊 Code-Usage Tracking: Aktiv`);
-    console.log(`🔔 Discord Webhooks: ${DISCORD_WEBHOOK_LOGS ? '✅' : '❌'} Logs | ${DISCORD_WEBHOOK_CHAT ? '✅' : '❌'} Chat`);
+    console.log(`📊 Code-Usage: ${Object.keys(codeUsage).length} Codes getrackt`);
 });
