@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const socketIO = require('socket.io');
 const cors = require('cors');
 const fs = require('fs');
@@ -25,28 +26,44 @@ app.use(express.json());
 const DISCORD_WEBHOOK_LOGS = process.env.DISCORD_WEBHOOK_LOGS;
 const DISCORD_WEBHOOK_CHAT = process.env.DISCORD_WEBHOOK_CHAT;
 
-// Discord Webhook Funktion
-async function sendDiscordWebhook(webhookUrl, content, embed = null) {
+// Discord Webhook Funktion (mit https Modul statt fetch)
+function sendDiscordWebhook(webhookUrl, content, embed = null) {
     if (!webhookUrl) {
         console.log('⚠️  Discord Webhook URL nicht konfiguriert');
         return;
     }
     
     try {
-        const payload = { content };
-        if (embed) {
-            payload.embeds = [embed];
-        }
-        
-        const response = await fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+        const payload = JSON.stringify({
+            content: content || undefined,
+            embeds: embed ? [embed] : undefined
         });
         
-        if (!response.ok) {
-            console.error('Discord Webhook Fehler:', response.status);
-        }
+        const url = new URL(webhookUrl);
+        
+        const options = {
+            hostname: url.hostname,
+            port: 443,
+            path: url.pathname,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            }
+        };
+        
+        const req = https.request(options, (res) => {
+            if (res.statusCode !== 204 && res.statusCode !== 200) {
+                console.error('Discord Webhook Fehler:', res.statusCode);
+            }
+        });
+        
+        req.on('error', (error) => {
+            console.error('Discord Webhook Fehler:', error.message);
+        });
+        
+        req.write(payload);
+        req.end();
     } catch (error) {
         console.error('Discord Webhook Fehler:', error.message);
     }
