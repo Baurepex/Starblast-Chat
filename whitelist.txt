@@ -1,10 +1,8 @@
 # Starblast Chat - Whitelist
 # Ein Code pro Zeile, 9-stellig (Zahlen + Buchstaben)
-# Format: CODE # Optionaler Kommentar
 
-# Beispiel-Codes (diese durch echte Codes ersetzen):
-A3K9X7M2B # für TestUser1
-K8L2P9X4N # für TestUser2
-
+A3K9X7M2B # für Player1
+K8L2P9X4N # für TestUser
+Q7R3M5T8W # für Admin
 
 # Weitere Codes hier hinzufügen...
