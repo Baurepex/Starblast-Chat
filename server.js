@@ -8,7 +8,7 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
-// CORS konfigurieren für Socket.io
+// Configure CORS for Socket.io
 const io = socketIO(server, {
     cors: {
         origin: "*",
@@ -21,14 +21,14 @@ const io = socketIO(server, {
 app.use(cors());
 app.use(express.json());
 
-// Discord Webhook URLs aus Environment Variables
+// Discord Webhook URLs from Environment Variables
 const DISCORD_WEBHOOK_LOGS = process.env.DISCORD_WEBHOOK_LOGS;
 const DISCORD_WEBHOOK_CHAT = process.env.DISCORD_WEBHOOK_CHAT;
 
-// Discord Webhook Funktion
+// Discord Webhook Function
 async function sendDiscordWebhook(webhookUrl, content, embed = null) {
     if (!webhookUrl) {
-        console.log('⚠️  Discord Webhook URL nicht konfiguriert');
+        console.log('⚠️  Discord Webhook URL not configured');
         return;
     }
     
@@ -45,22 +45,22 @@ async function sendDiscordWebhook(webhookUrl, content, embed = null) {
         });
         
         if (!response.ok) {
-            console.error('Discord Webhook Fehler:', response.status);
+            console.error('Discord Webhook Error:', response.status);
         }
     } catch (error) {
-        console.error('Discord Webhook Fehler:', error.message);
+        console.error('Discord Webhook Error:', error.message);
     }
 }
 
-// Discord Log-Funktionen
+// Discord Log Functions
 function discordLogSuccess(username, code) {
     const embed = {
-        title: '✅ Erfolgreiche Verifizierung',
-        description: `**${username}** hat sich verifiziert`,
+        title: '✅ Successful Verification',
+        description: `**${username}** has verified`,
         color: 0x00ff88,
         fields: [
             { name: 'Code', value: code, inline: true },
-            { name: 'Zeitpunkt', value: new Date().toLocaleString('de-DE'), inline: true }
+            { name: 'Time', value: new Date().toLocaleString('en-US'), inline: true }
         ],
         timestamp: new Date().toISOString()
     };
@@ -69,12 +69,12 @@ function discordLogSuccess(username, code) {
 
 function discordLogFailed(username, code) {
     const embed = {
-        title: '❌ Fehlgeschlagene Verifizierung',
-        description: `**${username}** versuchte ungültigen Code`,
+        title: '❌ Failed Verification',
+        description: `**${username}** tried invalid code`,
         color: 0xff0000,
         fields: [
-            { name: 'Versuchter Code', value: code, inline: true },
-            { name: 'Zeitpunkt', value: new Date().toLocaleString('de-DE'), inline: true }
+            { name: 'Attempted Code', value: code, inline: true },
+            { name: 'Time', value: new Date().toLocaleString('en-US'), inline: true }
         ],
         timestamp: new Date().toISOString()
     };
@@ -84,11 +84,11 @@ function discordLogFailed(username, code) {
 function discordLogConnect(username, code) {
     const embed = {
         title: '🔌 User Connected',
-        description: `**${username}** ist dem Chat beigetreten`,
+        description: `**${username}** joined the chat`,
         color: 0x0099ff,
         fields: [
             { name: 'Code', value: code, inline: true },
-            { name: 'Zeitpunkt', value: new Date().toLocaleString('de-DE'), inline: true }
+            { name: 'Time', value: new Date().toLocaleString('en-US'), inline: true }
         ],
         timestamp: new Date().toISOString()
     };
@@ -98,11 +98,11 @@ function discordLogConnect(username, code) {
 function discordLogDisconnect(username, code) {
     const embed = {
         title: '🔌 User Disconnected',
-        description: `**${username}** hat den Chat verlassen`,
+        description: `**${username}** left the chat`,
         color: 0x808080,
         fields: [
             { name: 'Code', value: code, inline: true },
-            { name: 'Zeitpunkt', value: new Date().toLocaleString('de-DE'), inline: true }
+            { name: 'Time', value: new Date().toLocaleString('en-US'), inline: true }
         ],
         timestamp: new Date().toISOString()
     };
@@ -114,14 +114,14 @@ function discordLogChatMessage(username, message) {
     sendDiscordWebhook(DISCORD_WEBHOOK_CHAT, content);
 }
 
-// Pfade für Dateien
+// Paths for files
 const WHITELIST_PATH = path.join(__dirname, 'whitelist.txt');
 
-// Whitelist und Code-Tracking
+// Whitelist and Code Tracking
 let whitelist = new Set();
 let codeUsage = {}; // { "CODE": ["username1", "username2"] }
 
-// Whitelist laden
+// Load Whitelist
 function loadWhitelist() {
     try {
         if (fs.existsSync(WHITELIST_PATH)) {
@@ -136,17 +136,17 @@ function loadWhitelist() {
                 }
             });
             
-            console.log(`✅ Whitelist geladen: ${whitelist.size} Codes`);
+            console.log(`✅ Whitelist loaded: ${whitelist.size} codes`);
         } else {
-            console.log('⚠️  whitelist.txt nicht gefunden, erstelle leere Datei');
-            fs.writeFileSync(WHITELIST_PATH, '# Codes hier eintragen (9-stellig)\n# Beispiel: A3K9X7M2B # für Player1\n');
+            console.log('⚠️  whitelist.txt not found, creating empty file');
+            fs.writeFileSync(WHITELIST_PATH, '# Enter codes here (9 digits)\n# Example: A3K9X7M2B # for Player1\n');
         }
     } catch (error) {
-        console.error('❌ Fehler beim Laden der Whitelist:', error);
+        console.error('❌ Error loading whitelist:', error);
     }
 }
 
-// Code tracken (nur im Memory)
+// Track code usage (only in memory)
 function trackCodeUsage(code, username) {
     const upperCode = code.toUpperCase();
     
@@ -156,29 +156,29 @@ function trackCodeUsage(code, username) {
     
     if (!codeUsage[upperCode].includes(username)) {
         codeUsage[upperCode].push(username);
-        console.log(`📊 Code ${upperCode} wird nun auch von "${username}" verwendet`);
+        console.log(`📊 Code ${upperCode} is now also used by "${username}"`);
     }
 }
 
-// Code validieren
+// Validate code
 function isValidCode(code) {
     return whitelist.has(code.toUpperCase());
 }
 
-// Initial laden
+// Initial load
 loadWhitelist();
 
-// Whitelist neu laden (manueller Trigger via Endpoint)
+// Reload whitelist (manual trigger via endpoint)
 app.get('/reload-whitelist', (req, res) => {
     loadWhitelist();
     res.json({ 
         success: true, 
-        message: 'Whitelist neu geladen',
+        message: 'Whitelist reloaded',
         totalCodes: whitelist.size 
     });
 });
 
-// Code-Usage Endpoint (für Übersicht)
+// Code Usage Endpoint (for overview)
 app.get('/admin/code-usage', (req, res) => {
     res.json({
         success: true,
@@ -189,10 +189,10 @@ app.get('/admin/code-usage', (req, res) => {
     });
 });
 
-// Gesundheitscheck-Endpoint
+// Health check endpoint
 app.get('/', (req, res) => {
     res.json({ 
-        status: 'Server läuft', 
+        status: 'Server running', 
         time: new Date().toISOString(),
         connectedClients: clients.size,
         whitelistedCodes: whitelist.size,
@@ -204,16 +204,16 @@ app.get('/', (req, res) => {
     });
 });
 
-// Speichere verbundene Clients
+// Store connected clients
 const clients = new Map();
 const messageHistory = [];
 const MAX_HISTORY = 50;
 
-// Socket.io Verbindungshandling
+// Socket.io connection handling
 io.on('connection', (socket) => {
-    console.log('🔌 Neuer Client verbunden:', socket.id);
+    console.log('🔌 New client connected:', socket.id);
     
-    // Client speichern (unverified)
+    // Store client (unverified)
     clients.set(socket.id, {
         id: socket.id,
         username: null,
@@ -222,40 +222,40 @@ io.on('connection', (socket) => {
         connectedAt: new Date()
     });
     
-    // Fordere Verifizierung an
+    // Request verification
     socket.emit('verifyRequired', {
-        message: 'Bitte verifiziere dich mit /verify CODE'
+        message: 'Please verify with /verify CODE'
     });
     
-    // Code-Verifizierung
+    // Code verification
     socket.on('verifyCode', (data) => {
         const { code, username } = data;
         const client = clients.get(socket.id);
         
         if (!client) return;
         
-        console.log(`🔐 Verify-Versuch von ${socket.id} (${username}): ${code}`);
+        console.log(`🔐 Verification attempt from ${socket.id} (${username}): ${code}`);
         
         if (isValidCode(code)) {
-            // Code ist gültig
+            // Code is valid
             client.verified = true;
             client.code = code.toUpperCase();
             client.username = username;
             
-            // Code-Usage tracken
+            // Track code usage
             trackCodeUsage(code, username);
             
-            console.log(`✅ ${username} erfolgreich verifiziert mit Code ${code.toUpperCase()}`);
+            console.log(`✅ ${username} successfully verified with code ${code.toUpperCase()}`);
             
-            // Discord Log: Erfolgreiche Verifizierung
+            // Discord Log: Successful verification
             discordLogSuccess(username, code.toUpperCase());
             
-            // Erfolg an Client senden
+            // Send success to client
             socket.emit('verifySuccess', {
-                message: 'Verifizierung erfolgreich! Willkommen im Chat.'
+                message: 'Verification successful! Welcome to the chat.'
             });
             
-            // Jetzt Chat-Historie senden
+            // Now send chat history
             socket.emit('welcome', {
                 history: messageHistory,
                 onlineUsers: Array.from(clients.values())
@@ -266,42 +266,42 @@ io.on('connection', (socket) => {
             // Discord Log: User Connected
             discordLogConnect(username, code.toUpperCase());
             
-            // Anderen Usern mitteilen
+            // Notify other users
             socket.broadcast.emit('userJoined', {
                 username: username,
-                message: `${username} ist dem Chat beigetreten`,
+                message: `${username} joined the chat`,
                 timestamp: new Date().toISOString()
             });
             
         } else {
-            // Code ist ungültig
-            console.log(`❌ Ungültiger Code von ${username}: ${code}`);
+            // Code is invalid
+            console.log(`❌ Invalid code from ${username}: ${code}`);
             
-            // Discord Log: Fehlgeschlagene Verifizierung
+            // Discord Log: Failed verification
             discordLogFailed(username, code);
             
             socket.emit('verifyFailed', {
-                message: 'Code ungültig, versuche es erneut'
+                message: 'Code invalid, please try again'
             });
         }
     });
     
-    // Username setzen (nur für verifizierte User)
+    // Set username (only for verified users)
     socket.on('setUsername', (username) => {
         const client = clients.get(socket.id);
         if (client && client.verified) {
             client.username = username;
-            console.log(`👤 Username aktualisiert für ${socket.id}: ${username}`);
+            console.log(`👤 Username updated for ${socket.id}: ${username}`);
         }
     });
     
-    // Nachricht empfangen (nur von verifizierten Usern)
+    // Receive message (only from verified users)
     socket.on('chatMessage', (data) => {
         const client = clients.get(socket.id);
         
         if (!client || !client.verified || !client.username) {
             socket.emit('verifyRequired', {
-                message: 'Du musst verifiziert sein um Nachrichten zu senden'
+                message: 'You must be verified to send messages'
             });
             return;
         }
@@ -314,22 +314,22 @@ io.on('connection', (socket) => {
             type: 'user'
         };
         
-        // Zur Historie hinzufügen
+        // Add to history
         messageHistory.push(message);
         if (messageHistory.length > MAX_HISTORY) {
             messageHistory.shift();
         }
         
-        // An alle VERIFIZIERTEN Clients senden
+        // Send to all VERIFIED clients
         io.emit('newMessage', message);
         
         console.log(`💬 ${message.username}: ${message.message}`);
         
-        // Discord Log: Chat-Nachricht
+        // Discord Log: Chat message
         discordLogChatMessage(message.username, message.message);
     });
     
-    // Client-Liste anfordern
+    // Request client list
     socket.on('requestUserList', () => {
         const client = clients.get(socket.id);
         if (client && client.verified) {
@@ -344,39 +344,39 @@ io.on('connection', (socket) => {
         }
     });
     
-    // Verbindung getrennt
+    // Connection closed
     socket.on('disconnect', () => {
         const client = clients.get(socket.id);
         if (client && client.verified && client.username) {
-            console.log(`🔌 Client getrennt: ${client.username} (Code: ${client.code})`);
+            console.log(`🔌 Client disconnected: ${client.username} (Code: ${client.code})`);
             
             // Discord Log: User Disconnected
             discordLogDisconnect(client.username, client.code);
             
-            // Broadcast: Spieler hat verlassen
+            // Broadcast: Player left
             socket.broadcast.emit('userLeft', {
                 username: client.username,
-                message: `${client.username} hat den Chat verlassen`,
+                message: `${client.username} left the chat`,
                 timestamp: new Date().toISOString()
             });
         } else {
-            console.log(`🔌 Nicht-verifizierter Client getrennt: ${socket.id}`);
+            console.log(`🔌 Unverified client disconnected: ${socket.id}`);
         }
         
         clients.delete(socket.id);
     });
     
-    // Ping/Pong für Verbindungscheck
+    // Ping/Pong for connection check
     socket.on('ping', () => {
         socket.emit('pong', { timestamp: Date.now() });
     });
 });
 
-// Server starten
+// Start server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`🚀 Server läuft auf Port ${PORT}`);
-    console.log(`📋 Whitelist: ${whitelist.size} Codes geladen`);
-    console.log(`📊 Code-Usage Tracking: Aktiv`);
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📋 Whitelist: ${whitelist.size} codes loaded`);
+    console.log(`📊 Code Usage Tracking: Active`);
     console.log(`🔔 Discord Webhooks: ${DISCORD_WEBHOOK_LOGS ? '✅' : '❌'} Logs | ${DISCORD_WEBHOOK_CHAT ? '✅' : '❌'} Chat`);
 });
