@@ -165,6 +165,27 @@ function isValidCode(code) {
     return whitelist.has(code.toUpperCase());
 }
 
+// Store connected clients
+const clients = new Map();
+const messageHistory = [];
+const MAX_HISTORY = 50;
+
+// Broadcast Online Count to all clients
+function broadcastOnlineCount() {
+    const verifiedUsers = Array.from(clients.values())
+        .filter(c => c.verified && c.username);
+    
+    const onlineCount = verifiedUsers.length;
+    const usernames = verifiedUsers.map(c => c.username);
+    
+    io.emit('onlineCountUpdate', {
+        count: onlineCount,
+        users: usernames
+    });
+    
+    console.log(`📊 Broadcasting online count: ${onlineCount} users`);
+}
+
 // Initial load
 loadWhitelist();
 
@@ -203,11 +224,6 @@ app.get('/', (req, res) => {
         }
     });
 });
-
-// Store connected clients
-const clients = new Map();
-const messageHistory = [];
-const MAX_HISTORY = 50;
 
 // Socket.io connection handling
 io.on('connection', (socket) => {
@@ -272,6 +288,9 @@ io.on('connection', (socket) => {
                 message: `${username} joined the chat`,
                 timestamp: new Date().toISOString()
             });
+            
+            // Broadcast updated online count
+            broadcastOnlineCount();
             
         } else {
             // Code is invalid
@@ -359,11 +378,16 @@ io.on('connection', (socket) => {
                 message: `${client.username} left the chat`,
                 timestamp: new Date().toISOString()
             });
+            
+            clients.delete(socket.id);
+            
+            // Broadcast updated online count
+            broadcastOnlineCount();
+            
         } else {
             console.log(`🔌 Unverified client disconnected: ${socket.id}`);
+            clients.delete(socket.id);
         }
-        
-        clients.delete(socket.id);
     });
     
     // Ping/Pong for connection check
