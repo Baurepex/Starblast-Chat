@@ -117,6 +117,141 @@ function discordLogChatMessage(username, message) {
 // Paths for files
 const WHITELIST_PATH = path.join(__dirname, 'whitelist.txt');
 
+// ====== 🔒 SECURITY FEATURES ======
+
+// Feature 1: XSS-Schutz - HTML Escape
+function escapeHtml(text) {
+    if (typeof text !== 'string') return '';
+    
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    
+    return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+function sanitizeMessage(message) {
+    if (typeof message !== 'string') return null;
+    
+    message = message.trim();
+    
+    // Max 500 Zeichen
+    if (message.length > 500) {
+        message = message.substring(0, 500);
+    }
+    
+    if (message.length === 0) {
+        return null;
+    }
+    
+    // Escape HTML (alle Zeichen erlaubt, aber HTML-escaped)
+    return escapeHtml(message);
+}
+
+// Feature 2: Rate Limiting
+const messageLimiter = new Map(); // socketId -> { count, resetTime }
+const RATE_LIMIT_MESSAGES = 5;     // Max 5 Nachrichten
+const RATE_LIMIT_WINDOW = 10000;   // pro 10 Sekunden
+
+function checkRateLimit(socketId) {
+    const now = Date.now();
+    const limit = messageLimiter.get(socketId) || {
+        count: 0,
+        resetTime: now + RATE_LIMIT_WINDOW
+    };
+    
+    // Zeit abgelaufen? Reset!
+    if (now > limit.resetTime) {
+        limit.count = 0;
+        limit.resetTime = now + RATE_LIMIT_WINDOW;
+    }
+    
+    // Zu viele Nachrichten?
+    if (limit.count >= RATE_LIMIT_MESSAGES) {
+        return false;
+    }
+    
+    limit.count++;
+    messageLimiter.set(socketId, limit);
+    return true;
+}
+
+// Feature 3: Brute-Force Schutz
+const failedAttempts = new Map(); // IP -> { count, blockedUntil }
+const MAX_FAILED_ATTEMPTS = 5;
+const BLOCK_DURATION = 5 * 60 * 1000; // 5 Minuten
+
+function checkBruteForce(ip) {
+    const now = Date.now();
+    const attempts = failedAttempts.get(ip) || {
+        count: 0,
+        blockedUntil: 0
+    };
+    
+    // Noch blockiert?
+    if (now < attempts.blockedUntil) {
+        const remainingSeconds = Math.ceil((attempts.blockedUntil - now) / 1000);
+        return {
+            blocked: true,
+            remainingSeconds: remainingSeconds
+        };
+    }
+    
+    return { blocked: false };
+}
+
+function recordFailedAttempt(ip) {
+    const now = Date.now();
+    const attempts = failedAttempts.get(ip) || {
+        count: 0,
+        blockedUntil: 0
+    };
+    
+    attempts.count++;
+    
+    if (attempts.count >= MAX_FAILED_ATTEMPTS) {
+        attempts.blockedUntil = now + BLOCK_DURATION;
+        attempts.count = 0;
+        console.log(`🚫 IP ${ip} blocked for 5 minutes`);
+    }
+    
+    failedAttempts.set(ip, attempts);
+}
+
+function clearFailedAttempts(ip) {
+    failedAttempts.delete(ip);
+}
+
+// Feature 4: Input Validation
+function isValidUsername(username) {
+    if (typeof username !== 'string') return false;
+    if (username.length < 2 || username.length > 20) return false;
+    if (!/^[a-zA-Z0-9_-]+$/.test(username)) return false;
+    
+    const blacklist = ['admin', 'system', 'mod', 'moderator', 'server'];
+    if (blacklist.includes(username.toLowerCase())) return false;
+    
+    return true;
+}
+
+function isValidCodeFormat(code) {
+    if (typeof code !== 'string') return false;
+    if (code.length !== 9) return false;
+    if (!/^[A-Z0-9]+$/.test(code.toUpperCase())) return false;
+    
+    return true;
+}
+
+// Code Masking für Logs
+function maskCode(code) {
+    if (!code || code.length !== 9) return '***';
+    return code.substring(0, 2) + '*****' + code.substring(7);
+}
+
 // Whitelist and Code Tracking
 let whitelist = new Set();
 let codeUsage = {}; // { "CODE": ["username1", "username2"] }
@@ -214,10 +349,17 @@ app.get('/admin/code-usage', (req, res) => {
 app.get('/', (req, res) => {
     res.json({ 
         status: 'Server running', 
+        version: '2.0-secure',
         time: new Date().toISOString(),
         connectedClients: clients.size,
         whitelistedCodes: whitelist.size,
         trackedCodes: Object.keys(codeUsage).length,
+        security: {
+            xssProtection: true,
+            rateLimiting: true,
+            bruteForceProtection: true,
+            inputValidation: true
+        },
         discordWebhooksConfigured: {
             logs: !!DISCORD_WEBHOOK_LOGS,
             chat: !!DISCORD_WEBHOOK_CHAT
@@ -244,66 +386,88 @@ io.on('connection', (socket) => {
     });
     
     // Code verification
-    socket.on('verifyCode', (data) => {
-        const { code, username } = data;
-        const client = clients.get(socket.id);
+socket.on('verifyCode', (data) => {
+    const { code, username } = data;
+    const client = clients.get(socket.id);
+    
+    if (!client) return;
+    
+    const ip = socket.handshake.address;
+    
+    // 🔒 FEATURE 3: Brute-Force Check
+    const bruteForceCheck = checkBruteForce(ip);
+    if (bruteForceCheck.blocked) {
+        socket.emit('verifyFailed', {
+            message: `🚫 Too many failed attempts. Try again in ${bruteForceCheck.remainingSeconds}s`,
+            blocked: true
+        });
+        return;
+    }
+    
+    // 🔒 FEATURE 4: Username Validation
+    if (!isValidUsername(username)) {
+        socket.emit('verifyFailed', {
+            message: 'Invalid username format (2-20 chars, alphanumeric)'
+        });
+        return;
+    }
+    
+    // 🔒 FEATURE 4: Code Format Validation
+    if (!isValidCodeFormat(code)) {
+        recordFailedAttempt(ip);
+        socket.emit('verifyFailed', {
+            message: 'Authentication failed'
+        });
+        return;
+    }
+    
+    console.log(`🔐 Verification attempt from ${username}`);
+    
+    if (isValidCode(code)) {
+        // Code ist gültig!
+        client.verified = true;
+        client.code = code.toUpperCase();
+        client.username = username;
         
-        if (!client) return;
+        trackCodeUsage(code, username);
+        clearFailedAttempts(ip);
         
-        console.log(`🔐 Verification attempt from ${socket.id} (${username}): ${code}`);
+        console.log(`✅ ${username} verified successfully`);
+        discordLogSuccess(username, maskCode(code.toUpperCase()));
         
-        if (isValidCode(code)) {
-            // Code is valid
-            client.verified = true;
-            client.code = code.toUpperCase();
-            client.username = username;
-            
-            // Track code usage
-            trackCodeUsage(code, username);
-            
-            console.log(`✅ ${username} successfully verified with code ${code.toUpperCase()}`);
-            
-            // Discord Log: Successful verification
-            discordLogSuccess(username, code.toUpperCase());
-            
-            // Send success to client
-            socket.emit('verifySuccess', {
-                message: 'Verification successful! Welcome to the chat.'
-            });
-            
-            // Now send chat history
-            socket.emit('welcome', {
-                history: messageHistory,
-                onlineUsers: Array.from(clients.values())
-                    .filter(c => c.verified && c.username)
-                    .map(c => c.username)
-            });
-            
-            // Discord Log: User Connected
-            discordLogConnect(username, code.toUpperCase());
-            
-            // Notify other users
-            socket.broadcast.emit('userJoined', {
-                username: username,
-                message: `${username} joined the chat`,
-                timestamp: new Date().toISOString()
-            });
-            
-            // Broadcast updated online count
-            broadcastOnlineCount();
-            
-        } else {
-            // Code is invalid
-            console.log(`❌ Invalid code from ${username}: ${code}`);
-            
-            // Discord Log: Failed verification
-            discordLogFailed(username, code);
-            
-            socket.emit('verifyFailed', {
-                message: 'Code invalid, please try again'
-            });
-        }
-    });
+        socket.emit('verifySuccess', {
+            message: 'Verification successful! Welcome to the chat.'
+        });
+        
+        socket.emit('welcome', {
+            history: messageHistory,
+            onlineUsers: Array.from(clients.values())
+                .filter(c => c.verified && c.username)
+                .map(c => c.username)
+        });
+        
+        discordLogConnect(username, maskCode(code.toUpperCase()));
+        
+        socket.broadcast.emit('userJoined', {
+            username: username,
+            message: `${username} joined the chat`,
+            timestamp: new Date().toISOString()
+        });
+        
+        broadcastOnlineCount();
+        
+    } else {
+        // Code ungültig
+        recordFailedAttempt(ip);
+        
+        console.log(`❌ Invalid code attempt`);
+        discordLogFailed(username, maskCode(code));
+        
+        socket.emit('verifyFailed', {
+            message: 'Authentication failed'
+        });
+    }
+});
     
     // Set username (only for verified users)
     socket.on('setUsername', (username) => {
@@ -315,38 +479,53 @@ io.on('connection', (socket) => {
     });
     
     // Receive message (only from verified users)
-    socket.on('chatMessage', (data) => {
-        const client = clients.get(socket.id);
-        
-        if (!client || !client.verified || !client.username) {
-            socket.emit('verifyRequired', {
-                message: 'You must be verified to send messages'
-            });
-            return;
-        }
-        
-        const message = {
-            id: Date.now() + Math.random(),
-            username: client.username,
-            message: data.message,
-            timestamp: new Date().toISOString(),
-            type: 'user'
-        };
-        
-        // Add to history
-        messageHistory.push(message);
-        if (messageHistory.length > MAX_HISTORY) {
-            messageHistory.shift();
-        }
-        
-        // Send to all VERIFIED clients
-        io.emit('newMessage', message);
-        
-        console.log(`💬 ${message.username}: ${message.message}`);
-        
-        // Discord Log: Chat message
-        discordLogChatMessage(message.username, message.message);
-    });
+socket.on('chatMessage', (data) => {
+    const client = clients.get(socket.id);
+    
+    if (!client || !client.verified || !client.username) {
+        socket.emit('verifyRequired', {
+            message: 'You must be verified to send messages'
+        });
+        return;
+    }
+    
+    // 🔒 FEATURE 2: Rate Limiting
+    if (!checkRateLimit(socket.id)) {
+        socket.emit('rateLimitError', {
+            message: '⏱️ Slow down! Too many messages.'
+        });
+        return;
+    }
+    
+    // 🔒 FEATURE 1 & 4: Sanitize Message (XSS-Schutz)
+    const sanitized = sanitizeMessage(data.message);
+    
+    if (!sanitized) {
+        return; // Leere/ungültige Nachricht ignorieren
+    }
+    
+    const message = {
+        id: Date.now() + Math.random(),
+        username: client.username,
+        message: sanitized,
+        timestamp: new Date().toISOString(),
+        type: 'user'
+    };
+    
+    // Add to history
+    messageHistory.push(message);
+    if (messageHistory.length > MAX_HISTORY) {
+        messageHistory.shift();
+    }
+    
+    // Send to all VERIFIED clients
+    io.emit('newMessage', message);
+    
+    console.log(`💬 ${message.username}: ${message.message}`);
+    
+    // Discord Log: Chat message
+    discordLogChatMessage(message.username, message.message);
+});
     
     // Request client list
     socket.on('requestUserList', () => {
@@ -365,30 +544,31 @@ io.on('connection', (socket) => {
     
     // Connection closed
     socket.on('disconnect', () => {
-        const client = clients.get(socket.id);
-        if (client && client.verified && client.username) {
-            console.log(`🔌 Client disconnected: ${client.username} (Code: ${client.code})`);
-            
-            // Discord Log: User Disconnected
-            discordLogDisconnect(client.username, client.code);
-            
-            // Broadcast: Player left
-            socket.broadcast.emit('userLeft', {
-                username: client.username,
-                message: `${client.username} left the chat`,
-                timestamp: new Date().toISOString()
-            });
-            
-            clients.delete(socket.id);
-            
-            // Broadcast updated online count
-            broadcastOnlineCount();
-            
-        } else {
-            console.log(`🔌 Unverified client disconnected: ${socket.id}`);
-            clients.delete(socket.id);
-        }
-    });
+    const client = clients.get(socket.id);
+    if (client && client.verified && client.username) {
+        console.log(`🔌 Client disconnected: ${client.username}`);
+        
+        // 🔒 Cleanup Rate Limiter
+        messageLimiter.delete(socket.id);
+        
+        discordLogDisconnect(client.username, maskCode(client.code));
+        
+        socket.broadcast.emit('userLeft', {
+            username: client.username,
+            message: `${client.username} left the chat`,
+            timestamp: new Date().toISOString()
+        });
+        
+        clients.delete(socket.id);
+        
+        broadcastOnlineCount();
+        
+    } else {
+        console.log(`🔌 Unverified client disconnected: ${socket.id}`);
+        messageLimiter.delete(socket.id);
+        clients.delete(socket.id);
+    }
+});
     
     // Ping/Pong for connection check
     socket.on('ping', () => {
