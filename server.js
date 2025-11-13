@@ -325,10 +325,14 @@ io.on('connection', (socket) => {
             return;
         }
         
+        // Extract nameColor from data, default to white if not provided
+        const nameColor = data.nameColor || '#ffffff';
+        
         const message = {
             id: Date.now() + Math.random(),
             username: client.username,
             message: data.message,
+            nameColor: nameColor, // Add nameColor to message object
             timestamp: new Date().toISOString(),
             type: 'user'
         };
@@ -339,12 +343,12 @@ io.on('connection', (socket) => {
             messageHistory.shift();
         }
         
-        // Send to all VERIFIED clients
+        // Send to all VERIFIED clients (with nameColor)
         io.emit('newMessage', message);
         
         console.log(`💬 ${message.username}: ${message.message}`);
         
-        // Discord Log: Chat message
+        // Discord Log: Chat message (WITHOUT color)
         discordLogChatMessage(message.username, message.message);
     });
     
